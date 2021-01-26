@@ -13,11 +13,13 @@ const _ = require('lodash');
 const math = require('mathjs');
 const MarkdownIt = require('markdown-it');
 const { Localize } = require('./src-back/localize');
-const { blocknetDir4, blocknetDir3, BLOCKNET_CONF_NAME4, BLOCKNET_CONF_NAME3, ipcMainListeners } = require('./src-back/constants');
+const { blocknetDir4, blocknetDir3, BLOCKNET_CONF_NAME4, BLOCKNET_CONF_NAME3, ipcMainListeners, pricingSources } = require('./src-back/constants');
 const { checkAndCopyV3Configs } = require('./src-back/config-updater');
 const { MainSwitch } = require('./src-back/main-switch');
 const { openUnverifiedAssetWindow } = require('./src-back/windows/unverified-asset-window');
 const { openMessageBox } = require('./src-back/windows/message-box');
+const { logger } = require('./src-back/logger');
+const { RecursiveInterval } = require('./src-back/recursive-interval');
 
 const versionDirectories = [
   blocknetDir4,
@@ -206,7 +208,10 @@ ipcMain.on('ZOOM_RESET', zoomReset);
 
 // General Error Handler
 const handleError = err => {
-  console.error(err);
+  logger.error(err.message + '\n' + err.stack);
+};
+const displayError = err => {
+  handleError(err);
   if(appWindow) {
     appWindow.send('error', { name: err.name, message: err.message });
   }
@@ -245,7 +250,7 @@ const openOrderDetailsWindow = details => {
   if(process.platform === 'win32') {
     height = isDev ? 680 : 662;
   } else if(process.platform === 'darwin') {
-    height = 645;
+    height = 655;
   } else { // Linux
     height = 645;
   }
@@ -256,7 +261,9 @@ const openOrderDetailsWindow = details => {
     height,
     parent: appWindow,
     webPreferences: {
-      nodeIntegration: true
+      nodeIntegration: true,
+      contextIsolation: false,
+      enableRemoteModule: true,
     }
   });
   if(isDev) {
@@ -345,7 +352,9 @@ const openUpdateAvailableWindow = (v, windowType, hideCheckbox = false) => new P
     height: platform === 'win32' ? 375 : platform === 'darwin' ? 355 : 340,
     parent: appWindow,
     webPreferences: {
-      nodeIntegration: true
+      nodeIntegration: true,
+      contextIsolation: false,
+      enableRemoteModule: true,
     }
   });
   if(platform !== 'darwin') updateAvailableWindow.setMenu(null);
@@ -455,7 +464,7 @@ const openConfigurationWindow = (options = {}) => {
   // const errorMessage = error ? 'There was a problem connecting to the Blocknet RPC server. What would you like to do?' : '';
   let errorTitle, errorMessage;
   if(error) {
-    console.log(error);
+    handleError(error);
     switch(error.status) {
       case 401:
         errorTitle = Localize.text('Authorization Problem', 'configurationWindow');
@@ -465,7 +474,7 @@ const openConfigurationWindow = (options = {}) => {
         errorTitle = Localize.text('Connection Error', 'configurationWindow');
         errorMessage = Localize.text('There was a problem connecting to the Blocknet wallet. Make sure the wallet has been configured, restarted, and is open and unlocked.', 'configurationWindow');
     }
-    console.log(errorMessage);
+    logger.info(errorMessage);
   } else {
     errorMessage = '';
   }
@@ -476,7 +485,9 @@ const openConfigurationWindow = (options = {}) => {
     height: platform === 'win32' ? 708 : platform === 'darwin' ? 695 : 670,
     parent: appWindow,
     webPreferences: {
-      nodeIntegration: true
+      nodeIntegration: true,
+      contextIsolation: false,
+      enableRemoteModule: true,
     }
   });
   if(isDev) {
@@ -519,7 +530,7 @@ const openConfigurationWindow = (options = {}) => {
       openSettingsWindow();
       configurationWindow.close();
     } catch(err) {
-      handleError(err);
+      displayError(err);
     }
   });
 
@@ -645,7 +656,7 @@ const openSettingsWindow = (options = {}) => {
 
   if(options.error) {
     const { error } = options;
-    console.log(error);
+    handleError(error);
     switch(error.status) {
       case 401:
         errorMessage = Localize.text('There was an authorization problem. Please correct your username and/or password.', 'settingsWindow');
@@ -653,7 +664,7 @@ const openSettingsWindow = (options = {}) => {
       default:
         errorMessage = Localize.text('There was a problem connecting to the Blocknet RPC server. Please check the RPC port.', 'settingsWindow');
     }
-    console.log(errorMessage);
+    logger.info(errorMessage);
   }
 
   ipcMain.on('getPort', e => {
@@ -684,7 +695,9 @@ const openSettingsWindow = (options = {}) => {
     height: platform === 'win32' ? 640 : platform === 'darwin' ? 625 : 600,
     parent: appWindow,
     webPreferences: {
-      nodeIntegration: true
+      nodeIntegration: true,
+      contextIsolation: false,
+      enableRemoteModule: true,
     }
   });
   if(isDev) {
@@ -703,7 +716,7 @@ const openSettingsWindow = (options = {}) => {
       try {
         configurationWindow.close();
       } catch(err) {
-        console.error(err);
+        handleError(err);
       }
     }
   });
@@ -765,21 +778,20 @@ ipcMain.on('getBlocknetIP', e => {
   e.returnValue = storage.getItem('blocknetIP') || '';
 });
 
-// Flag used for the config setup to show the litewallet option
-ipcMain.on('enableLitewalletConfig', e => {
-  let enableLitewalletConfig = storage.getItem('enableLitewalletConfig');
-  if (!enableLitewalletConfig && enableLitewalletConfig !== false) {
-    enableLitewalletConfig = false;
-    storage.setItem('enableLitewalletConfig', enableLitewalletConfig);
+const getDefaultCCDirectory = () => {
+  if(platform === 'win32') { // Windows
+    return path.join(electron.app.getPath('appData'), 'CloudChains');
+  } else if(platform === 'darwin') { // Mac
+    return path.join(electron.app.getPath('appData'), 'CloudChains');
+  } else { // Linux
+    return path.join(electron.app.getPath('appData'), 'CloudChains');
   }
-  e.returnValue = enableLitewalletConfig;
-});
+};
 
 ipcMain.on('getLitewalletConfigDirectory', e => {
-  let litewalletConfigDirectory = storage.getItem('litewalletConfigDirectory');
-  if(!litewalletConfigDirectory && litewalletConfigDirectory !== '') {
+  let litewalletConfigDirectory = storage.getItem('litewalletConfigDirectory') || getDefaultCCDirectory();
+  if(!fs.existsSync(litewalletConfigDirectory)) {
     litewalletConfigDirectory = '';
-    storage.setItem('litewalletConfigDirectory', litewalletConfigDirectory);
   }
   e.returnValue = litewalletConfigDirectory;
 });
@@ -797,7 +809,9 @@ const openGeneralSettingsWindow = () => {
     parent: appWindow,
     modal: platform === 'darwin' ? false : true,
     webPreferences: {
-      nodeIntegration: true
+      nodeIntegration: true,
+      contextIsolation: false,
+      enableRemoteModule: true,
     }
   });
 
@@ -855,7 +869,9 @@ const openInformationWindow = () => {
     parent: appWindow,
     modal: platform === 'darwin' ? false : true,
     webPreferences: {
-      nodeIntegration: true
+      nodeIntegration: true,
+      contextIsolation: false,
+      enableRemoteModule: true,
     }
   });
 
@@ -896,7 +912,9 @@ const openReleaseNotesWindow = () => {
     height: height,
     parent: appWindow,
     webPreferences: {
-      nodeIntegration: true
+      nodeIntegration: true,
+      contextIsolation: false,
+      enableRemoteModule: true,
     }
   });
   if(isDev) {
@@ -941,7 +959,7 @@ const openTOSWindow = (alreadyAccepted = false) => {
       const text = fs.readFileSync(path.join(__dirname, 'tos.txt'), 'utf8');
       e.returnValue = text;
     } catch(err) {
-      console.error(err);
+      handleError(err);
     }
   });
   ipcMain.on('cancelTOS', () => {
@@ -971,7 +989,9 @@ const openTOSWindow = (alreadyAccepted = false) => {
     height: height,
     parent: appWindow,
     webPreferences: {
-      nodeIntegration: true
+      nodeIntegration: true,
+      contextIsolation: false,
+      enableRemoteModule: true,
     }
   });
   if(isDev) {
@@ -1000,7 +1020,9 @@ const openAppWindow = () => {
     width: Math.max(width, 1050),
     height: Math.max(height, 760),
     webPreferences: {
-      nodeIntegration: true
+      nodeIntegration: true,
+      contextIsolation: false,
+      enableRemoteModule: true,
     }
     // Below is the proper way to set the initial window zoom factor, but there is a bug
     // in Electron 3 which causes it to not work correctly. When we upgrade, we can
@@ -1041,7 +1063,7 @@ const openAppWindow = () => {
       const bounds = appWindow.getBounds();
       storage.setItem('bounds', bounds);
     } catch(err) {
-      console.error(err);
+      handleError(err);
     }
   });
 
@@ -1064,7 +1086,7 @@ const openAppWindow = () => {
       })
       .catch(err => {
         appWindow.send('orderDone', 'server error');
-        handleError(err);
+        displayError(err);
       });
   });
 
@@ -1081,11 +1103,11 @@ const openAppWindow = () => {
       })
       .catch(err => {
         appWindow.send('orderDone', 'server error');
-        handleError(err);
+        displayError(err);
       });
   });
 
-  const stdInterval = 4000;
+  const stdInterval = 5000;
 
   let orderBook = {
     maker: '',
@@ -1101,48 +1123,54 @@ const openAppWindow = () => {
 
   const calculateBackupTotal = (price, size) => math.round(math.multiply(math.bignumber(price), math.bignumber(size)), 6).toNumber().toFixed(6);
 
-  const sendOrderBook = force => {
-    if (isTokenPairValid(keyPair))
-      sn.dxGetOrderBook3(keyPair[0], keyPair[1], 250)
-        .then(async function(res) {
-          if(force === true || JSON.stringify(res) !== JSON.stringify(orderBook)) {
-            orderBook = res;
-            const allOrders = await getOrders();
-            const orderTotals = new Map(allOrders.map(({ id, makerSize, takerSize }) => [id, [makerSize, takerSize]]));
-            const orderBookWithTotals = Object.assign({}, res, {
-              asks: res.asks.map(a => {
-                const order = orderTotals.get(a.orderId);
-                const total = !order ? calculateBackupTotal(a.price, a.size) : a.size === order[0] ? order[1] : order[0];
-                return Object.assign({}, a, {total});
-              }),
-              bids: res.bids.map(b => {
-                const order = orderTotals.get(b.orderId);
-                const total = !order ? calculateBackupTotal(b.price, b.size) : b.size === order[0] ? order[1] : order[0];
-                return Object.assign({}, b, {total});
-              })
-            });
-            appWindow.send('orderBook', orderBookWithTotals);
-          }
-        })
-        .catch(handleError);
+  const sendOrderBook = async function(force) {
+    if (isTokenPairValid(keyPair)) {
+      try {
+        const res = await sn.dxGetOrderBook3(keyPair[0], keyPair[1], 250);
+        if(force === true || JSON.stringify(res) !== JSON.stringify(orderBook)) {
+          orderBook = res;
+          const allOrders = await getOrders();
+          const orderTotals = new Map(allOrders.map(({ id, makerSize, takerSize }) => [id, [makerSize, takerSize]]));
+          const orderBookWithTotals = Object.assign({}, res, {
+            asks: res.asks.map(a => {
+              const order = orderTotals.get(a.orderId);
+              const total = !order ? calculateBackupTotal(a.price, a.size) : a.size === order[0] ? order[1] : order[0];
+              return Object.assign({}, a, {total});
+            }),
+            bids: res.bids.map(b => {
+              const order = orderTotals.get(b.orderId);
+              const total = !order ? calculateBackupTotal(b.price, b.size) : b.size === order[0] ? order[1] : order[0];
+              return Object.assign({}, b, {total});
+            })
+          });
+          appWindow.send('orderBook', orderBookWithTotals);
+        }
+      } catch(err) {
+        handleError(err);
+      }
+    }
   };
   ipcMain.on('getOrderBook', () => sendOrderBook(true));
-  setInterval(sendOrderBook, stdInterval);
+  const sendOrderBookInterval = new RecursiveInterval();
+  sendOrderBookInterval.set(sendOrderBook, stdInterval);
 
   tradeHistory = [];
-  const sendTradeHistory = force => {
-    if (isTokenPairValid(keyPair))
-      sn.dxGetOrderFills(keyPair[0], keyPair[1])
-        .then(res => {
-          if(force === true || JSON.stringify(res) !== JSON.stringify(tradeHistory)) {
-            tradeHistory = res;
-            appWindow.send('tradeHistory', tradeHistory, keyPair);
-          }
-        })
-        .catch(handleError);
+  const sendTradeHistory = async function(force) {
+    if (isTokenPairValid(keyPair)) {
+      try {
+        const res = await sn.dxGetOrderFills(keyPair[0], keyPair[1])
+        if(force === true || JSON.stringify(res) !== JSON.stringify(tradeHistory)) {
+          tradeHistory = res;
+          appWindow.send('tradeHistory', tradeHistory, keyPair);
+        }
+      } catch(err) {
+        handleError(err);
+      }
+    }
   };
   ipcMain.on('getTradeHistory', () => sendTradeHistory(true));
-  setInterval(sendTradeHistory, stdInterval);
+  const sendTradeHistoryInterval = new RecursiveInterval();
+  sendTradeHistoryInterval.set(sendTradeHistory, stdInterval);
 
   const sendLocalTokens = async function() {
     const localTokens = await sn.dxGetLocalTokens();
@@ -1169,24 +1197,35 @@ const openAppWindow = () => {
   ipcMain.on('getNetworkTokens', sendNetworkTokens);
 
   // Token refresh interval
-  setInterval(() => {
-    sendNetworkTokens();
-    sendLocalTokens();
+  const sendTokensInterval = new RecursiveInterval();
+  sendTokensInterval.set(async function() {
+    try {
+      await sendNetworkTokens();
+    } catch(err) {
+      handleError(err);
+    }
+    try {
+      await sendLocalTokens();
+    } catch(err) {
+      handleError(err);
+    }
   }, 15000);
 
   myOrders = [];
-  const sendMyOrders = force => {
-    sn.dxGetMyOrders()
-      .then(res => {
-        if(force === true || JSON.stringify(res) !== JSON.stringify(myOrders)) {
-          myOrders = res;
-          appWindow.send('myOrders', myOrders, keyPair);
-        }
-      })
-      .catch(handleError);
+  const sendMyOrders = async function(force) {
+    try {
+      const res = await sn.dxGetMyOrders();
+      if(force === true || JSON.stringify(res) !== JSON.stringify(myOrders)) {
+        myOrders = res;
+        appWindow.send('myOrders', myOrders, keyPair);
+      }
+    } catch(err) {
+      handleError(err);
+    }
   };
   ipcMain.on('getMyOrders', () => sendMyOrders(true));
-  setInterval(sendMyOrders, stdInterval);
+  const sendMyOrdersInterval = new RecursiveInterval();
+  sendMyOrdersInterval.set(sendMyOrders, stdInterval);
 
   const calculatePricingData = orderHistory => {
     if (!orderHistory || orderHistory.length === 0)
@@ -1213,7 +1252,7 @@ const openAppWindow = () => {
   const orderKey = (pair) => pair[0] + pair[1];
   const orderHistoryDict = new Map();
 
-  const sendOrderHistory = (which = '', force = false) => {
+  const sendOrderHistory = async function(which = '', force = false) {
     if (!isTokenPairValid(keyPair)) // need valid token pair
       return;
     const key = orderKey(keyPair);
@@ -1241,39 +1280,36 @@ const openAppWindow = () => {
     const end = moment().utc();
     const start = end.clone().subtract(1, 'day');
 
-    {
-      sn.dxGetOrderHistory(keyPair[0], keyPair[1], start.unix(), end.unix(), 60)
-        .then(res => {
-          Object.assign(orderHistoryDict.get(key), {
-            orderHistory: res,
-            orderHistoryByMinute: res,
-            currentPrice: calculatePricingData(res)
-          });
-          if (key === orderKey(keyPair)) {
-            appWindow.send('orderHistory', res);
-            appWindow.send('orderHistoryByMinute', res);
-            appWindow.send('currentPrice', orderHistoryDict.get(key)['currentPrice']);
-          }
-        })
-        .catch(handleError);
+    try {
+      const res = await sn.dxGetOrderHistory(keyPair[0], keyPair[1], start.unix(), end.unix(), 60);
+      Object.assign(orderHistoryDict.get(key), {
+        orderHistory: res,
+        orderHistoryByMinute: res,
+        currentPrice: calculatePricingData(res)
+      });
+      if (key === orderKey(keyPair)) {
+        appWindow.send('orderHistory', res);
+        appWindow.send('orderHistoryByMinute', res);
+        appWindow.send('currentPrice', orderHistoryDict.get(key)['currentPrice']);
+      }
+    } catch(err) {
+      handleError(err);
     }
-    {
-      sn.dxGetOrderHistory(keyPair[0], keyPair[1], start.unix(), end.unix(), 900)
-        .then(res => {
-          orderHistoryDict.get(key)['orderHistoryBy15Minutes'] = res;
-          if (key === orderKey(keyPair))
-            appWindow.send('orderHistoryBy15Minutes', res);
-        })
-        .catch(handleError);
+    try {
+      const res = await sn.dxGetOrderHistory(keyPair[0], keyPair[1], start.unix(), end.unix(), 900);
+      orderHistoryDict.get(key)['orderHistoryBy15Minutes'] = res;
+      if (key === orderKey(keyPair))
+        appWindow.send('orderHistoryBy15Minutes', res);
+    } catch(err) {
+      handleError(err);
     }
-    {
-      sn.dxGetOrderHistory(keyPair[0], keyPair[1], start.unix(), end.unix(), 3600)
-        .then(res => {
-          orderHistoryDict.get(key)['orderHistoryBy1Hour'] = res;
-          if (key === orderKey(keyPair))
-            appWindow.send('orderHistoryBy1Hour', res);
-        })
-        .catch(handleError);
+    try {
+      const res = await sn.dxGetOrderHistory(keyPair[0], keyPair[1], start.unix(), end.unix(), 3600);
+      orderHistoryDict.get(key)['orderHistoryBy1Hour'] = res;
+      if (key === orderKey(keyPair))
+        appWindow.send('orderHistoryBy1Hour', res);
+    } catch(err) {
+      handleError(err);
     }
   };
 
@@ -1283,7 +1319,8 @@ const openAppWindow = () => {
   ipcMain.on('getOrderHistoryBy1Hour', () => sendOrderHistory('orderHistoryBy1Hour'));
   ipcMain.on('getCurrentPrice', () => sendOrderHistory('currentPrice'));
 
-  setInterval(sendOrderHistory, 30000);
+  const sendOrderHistoryInterval = new RecursiveInterval();
+  sendOrderHistoryInterval.set(sendOrderHistory, 30000);
 
   // TODO This is too aggressive to be called as frequently as it is...
   const sendCurrencies = async function() {
@@ -1376,7 +1413,7 @@ const openAppWindow = () => {
         [key]: address
       }));
     } catch(err) {
-      handleError(err);
+      displayError(err);
     }
   });
 
@@ -1393,22 +1430,24 @@ const openAppWindow = () => {
           sendMyOrders(true);
         }, 1000);
       })
-      .catch(handleError);
+      .catch(displayError);
   });
 
   let balances = [];
-  const sendBalances = force  => {
-    sn.dxGetTokenBalances()
-      .then(data => {
-        if(force === true || JSON.stringify(data) !== JSON.stringify(balances)) {
-          balances = data;
-          appWindow.send('balances', balances);
-        }
-      })
-      .catch(handleError);
+  const sendBalances = async function(force) {
+    try {
+      const data = await sn.dxGetTokenBalances();
+      if(force === true || JSON.stringify(data) !== JSON.stringify(balances)) {
+        balances = data;
+        appWindow.send('balances', balances);
+      }
+    } catch(err) {
+      handleError(err);
+    }
   };
   ipcMain.on('getBalances', () => sendBalances(true));
-  setInterval(sendBalances, stdInterval);
+  const sendBalancesInterval = new RecursiveInterval();
+  sendBalancesInterval.set(sendBalances, 12000);
 
   ipcMain.on('refreshBalances', async function() {
     try {
@@ -1417,7 +1456,7 @@ const openAppWindow = () => {
       await sendLocalTokens();
       await sendBalances(true);
     } catch(err) {
-      console.error(err);
+      handleError(err);
     }
   });
 
@@ -1441,12 +1480,13 @@ const openAppWindow = () => {
   let pricingInterval;
 
   clearPricingInterval = () => {
-    clearInterval(pricingInterval);
+    pricingInterval.clear();
   };
   setPricingInterval = () => {
-    pricingInterval = setInterval(() => {
+    pricingInterval = new RecursiveInterval();
+    pricingInterval.set(async function() {
       if (isTokenPairValid(keyPair))
-        sendPricingMultipliers();
+        await sendPricingMultipliers();
     }, pricingFrequency);
   };
 
@@ -1658,7 +1698,7 @@ ipcMain.on('loadXBridgeConf', async function() {
   try {
     await loadXBridgeConf();
   } catch(err) {
-    console.error(err);
+    handleError(err);
   }
 });
 
@@ -1766,7 +1806,7 @@ ipcMain.on('generateNewAddress', async function(e, token) {
     storage.setItem('addresses', newAddresses);
     appWindow.send('updatedAddresses', newAddresses);
   } catch(err) {
-    console.error(err);
+    handleError(err);
   }
 });
 
@@ -1783,7 +1823,7 @@ const generateNewAddresses = async function() {
         if(address) addresses[token] = address;
       } catch(err) {
         // silently handle errors
-        console.error(err);
+        handleError(err);
       }
     }
     storage.setItem('addresses', addresses);
@@ -1810,7 +1850,7 @@ ipcMain.on(ipcMainListeners.OPEN_REFUND_NOTIFICATION, async function(e, { title,
     const notShowAgain = await openMessageBox(title, message, appWindow, storage);
     storage.setItem('hideRefundNotification', notShowAgain);
   } catch(err) {
-    handleError(err);
+    displayError(err);
   }
 });
 
@@ -1825,6 +1865,7 @@ ipcMain.on(ipcMainListeners.OPEN_REFUND_NOTIFICATION, async function(e, { title,
       dataPath = app.getPath('userData');
     }
 
+    logger.initialize(dataPath);
 
     metaPath = path.join(dataPath, 'app-meta.json');
     storage = new SimpleStorage(metaPath);
@@ -1846,7 +1887,7 @@ ipcMain.on(ipcMainListeners.OPEN_REFUND_NOTIFICATION, async function(e, { title,
 
     pricingSource = storage.getItem('pricingSource');
     if(!pricingSource) {
-      pricingSource = 'CRYPTO_COMPARE';
+      pricingSource = pricingSources.CLOUD_CHAINS;
       storage.setItem('pricingSource', pricingSource);
     }
     apiKeys = storage.getItem('apiKeys');
@@ -1905,7 +1946,7 @@ ipcMain.on(ipcMainListeners.OPEN_REFUND_NOTIFICATION, async function(e, { title,
         const confController = new ConfController({ storage });
         await confController.update();
       } catch(err) {
-        console.error(err);
+        handleError(err);
       }
     }
 
@@ -2023,8 +2064,8 @@ function isTokenPairValid(keyPair) {
 
 // check for version number. Minimum supported blocknet client version
 function versionCheck(version) {
-  if (version < 4030000) {
-    const requiredVersion = '4.3.0';
+  if (version < 4030100) {
+    const requiredVersion = '4.3.1';
     return {
       name: Localize.text('Unsupported Version', 'universal'),
       message: Localize.text('Block DX requires Blocknet wallet version {requiredVersion} or greater.', 'universal', {requiredVersion})

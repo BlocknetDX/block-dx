@@ -1,5 +1,4 @@
 import { Injectable } from '@angular/core';
-import { Headers, Http } from '@angular/http';
 import { Observable } from 'rxjs/Observable';
 import { Observer } from 'rxjs/Observer';
 import { Subject } from 'rxjs/Subject';
@@ -8,6 +7,7 @@ import 'rxjs/add/operator/toPromise';
 import 'rxjs/add/operator/map';
 import { Order } from './order';
 import {BehaviorSubject} from 'rxjs/BehaviorSubject';
+import {logger} from './modules/logger';
 
 math.config({
   number: 'BigNumber',
@@ -30,7 +30,7 @@ export class OrderbookService {
   private orderbookUrl = '';
   // private orderbookUrl = 'https://api-public.sandbox.gdax.com/products/ETH-BTC/book?level=2';
 
-  constructor(private http: Http) { }
+  constructor() { }
 
   requestOrder(order: any) {
     this.requestedOrder.next(order);
@@ -137,7 +137,7 @@ export class OrderbookService {
   }
 
   private handleError(error: any): Promise<any> {
-    console.error('An error occurred', error); // for demo purposes only
+    logger.error(error.message + '\n' + error.stack);
     return Promise.reject(error.message || error);
   }
 }

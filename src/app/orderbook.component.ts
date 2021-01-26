@@ -30,8 +30,8 @@ const { bignumber } = math;
 })
 
 export class OrderbookComponent implements OnInit, OnDestroy {
-  @ViewChild('orderbookTopTable') public orderbookTopTable: TableComponent;
-  @ViewChild('orderbookBottomTable') public orderbookBottomTable: TableComponent;
+  @ViewChild('orderbookTopTable', {static: true}) public orderbookTopTable: TableComponent;
+  @ViewChild('orderbookBottomTable', {static: true}) public orderbookBottomTable: TableComponent;
 
   public sections: any[] = [
     {rows: []},
@@ -257,7 +257,6 @@ export class OrderbookComponent implements OnInit, OnDestroy {
       const askPrice = pricing.getPrice(asks[asks.length - 1][0], symbols[1]);
       const bidPrice = pricing.getPrice(bids[0][0], symbols[1]);
       this.pricingSpread = String(math.subtract(bignumber(askPrice), bignumber(bidPrice)).toNumber());
-      // console.log('pricingSpread', this.pricingSpread);
     } else {
       this.pricingSpread = '';
     }

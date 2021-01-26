@@ -15,6 +15,7 @@ import { Pricing } from './pricing';
 import {ConfigurationOverlayService} from './configuration.overlay.service';
 import {alert, shouldHidePricing} from './util';
 import {Localize} from './localize/localize.component';
+import {logger} from './modules/logger';
 
 const delocalize = (numStr = '') => {
   const decimalSeparator = Localize.decimalSeparator();
@@ -38,10 +39,10 @@ const { bignumber } = math;
   styleUrls: ['./orderform.component.scss']
 })
 export class OrderformComponent implements OnInit {
-  @ViewChild('tabView') public tabView: TabViewComponent;
-  @ViewChild('typeSelect') public typeSelect: SelectComponent;
+  @ViewChild('tabView', {static: false}) public tabView: TabViewComponent;
+  @ViewChild('typeSelect', {static: false}) public typeSelect: SelectComponent;
 
-  @ViewChild('scrollbar')
+  @ViewChild('scrollbar', {static: false})
 
   public scrollbar: PerfectScrollbarDirective;
   public symbols:string[] = [];
@@ -449,7 +450,7 @@ export class OrderformComponent implements OnInit {
     }
 
     const { ipcRenderer } = window.electron;
-    console.log('Submit order', type, this.model);
+    logger.info(`Submit ${type} order\n${JSON.stringify(this.model, null, '  ')}`);
     makerAddress = makerAddress.trim();
     takerAddress = takerAddress.trim();
     amount = amount.trim();

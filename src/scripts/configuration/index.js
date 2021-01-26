@@ -21,6 +21,7 @@ const EnterWalletCredentials = require('./views/enter-wallet-credentials');
 const ConfigurationMenu = require('./views/configuration-menu');
 const SelectLitewalletConfigDirectory = require('./views/select-litewallet-config-directory');
 const Wallet = require('./modules/wallet');
+const { handleError } = require('./util');
 
 const { Localize } = require('../../../src-back/localize');
 Localize.initialize(ipcRenderer.sendSync('getUserLocale'), ipcRenderer.sendSync('getLocaleData'));
@@ -44,7 +45,7 @@ ipcRenderer.on('errorMessage', async function(e, title, message) {
       ipcRenderer.send('restart');
     }
   } catch(err) {
-    console.error(err);
+    handleError(err);
     alert(err);
   }
 });
@@ -84,7 +85,6 @@ $(document).ready(() => {
     state.set('rpcIP', defaults.IP);
     state.set('username', ipcRenderer.sendSync('getUser'));
     state.set('password', ipcRenderer.sendSync('getPassword'));
-    state.set('enableLitewalletConfig', ipcRenderer.sendSync('enableLitewalletConfig'));
     state.set('litewalletConfigDirectory', ipcRenderer.sendSync('getLitewalletConfigDirectory'));
 
     const isFirstRun = ipcRenderer.sendSync('isFirstRun');
@@ -131,7 +131,7 @@ $(document).ready(() => {
       if(!xbridgeConfPath) xbridgeConfPath = path.join(wallets.find(w => w.abbr === 'BLOCK').directory, 'xbridge.conf');
       xbridgeConf = fs.readFileSync(xbridgeConfPath, 'utf8');
     } catch(err) {
-      console.error(err);
+      handleError(err);
       xbridgeConf = '';
     }
     if(xbridgeConf) {
@@ -141,7 +141,7 @@ $(document).ready(() => {
           .map(s => s.trim())
           .filter(s => s ? true : false);
         const exchangeWallets = splitConf
-          .find(s => /^ExchangeWallets=/.test(s))
+          .find(s => /^ExchangeWallets\s*=/.test(s))
           .split('=')[1]
           .split(',')
           .map(s => s.trim())
@@ -163,7 +163,7 @@ $(document).ready(() => {
           selectedWalletIds = selectedWalletIds.add(w.versionId);
         }
       } catch(err) {
-        console.error(err);
+        handleError(err);
       }
 
     }
@@ -193,6 +193,6 @@ $(document).ready(() => {
 
   } catch(err) {
     alert(err.message);
-    console.error(err);
+    handleError(err);
   }
 });
